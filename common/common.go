@@ -545,6 +545,16 @@ const (
 	LbSelN2
 	// LbSelN3 - select client based on N3 interface
 	LbSelN3
+	// LbSelQuicCID - select the end-point named by the server ID in a QUIC connection ID
+	LbSelQuicCID
+)
+
+const (
+	// QuicLbSidLen - length in bytes of the server ID of a LbSelQuicCID rule. It is
+	// the end-point's IPv4 address, the only form supported
+	QuicLbSidLen = 4
+	// QuicLbCrMax - highest config rotation value of a LbSelQuicCID rule
+	QuicLbCrMax = 7
 )
 
 // LBMode - Variable to define LB mode
@@ -643,6 +653,29 @@ type LbServiceArg struct {
 	ProxyProtocolV2 bool `json:"proxyprotocolv2"`
 	// Egress - Egress Rule
 	Egress bool `json:"egress"`
+	// QuicLb - QUIC-LB parameters. Only valid with LbSelQuicCID, which applies the
+	// defaults (server ID length 4, config rotation 0) when it is nil
+	QuicLb *QuicLbArg `json:"quicLb,omitempty"`
+}
+
+// QuicLbArg - QUIC-LB parameters of a LbSelQuicCID rule
+type QuicLbArg struct {
+	// SidLen - length in bytes of the server ID. Only QuicLbSidLen is accepted
+	SidLen uint8 `json:"sidLen"`
+	// Cr - config rotation value the connection IDs carry, 0 to QuicLbCrMax
+	Cr uint8 `json:"cr"`
+}
+
+// LbQuicCidStats - datapath selector counters of a LbSelQuicCID rule
+type LbQuicCidStats struct {
+	// Rule - identifies the rule: service-ip:port/proto, and #block if it has one
+	Rule string
+	// Routed - new flows sent to the end-point named by their server ID
+	Routed uint64
+	// Unroutable - new flows with no usable server ID, which took the hash path
+	Unroutable uint64
+	// Miss - new flows whose server ID names no active end-point, which took the hash path
+	Miss uint64
 }
 
 // LbEndPointArg - Information related to load-balancer end-point
@@ -1114,6 +1147,7 @@ type NetHookInterface interface {
 	NetLbRuleAdd(*LbRuleMod) (int, error)
 	NetLbRuleDel(*LbRuleMod) (int, error)
 	NetLbRuleGet() ([]LbRuleMod, error)
+	NetLbQuicCidStatsGet() ([]LbQuicCidStats, error)
 	NetCtInfoGet() ([]CtInfo, error)
 	NetSessionGet() ([]SessionMod, error)
 	NetSessionUlClGet() ([]SessionUlClMod, error)

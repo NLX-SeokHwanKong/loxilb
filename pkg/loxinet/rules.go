@@ -247,6 +247,9 @@ type ruleLBActs struct {
 	mode      cmn.LBMode
 	sel       cmn.EpSelect
 	endPoints []ruleLBEp
+	// quicSidLen, quicCr - only with LbSelQuicCID
+	quicSidLen uint8
+	quicCr     uint8
 	// prioSlotOf[slot] is the endPoints index programmed into that DP
 	// slot for LbSelPrio rules. The DP counts stats per slot, not per
 	// endpoint, so stat collection must fold slots back via this map.
@@ -810,6 +813,12 @@ func (R *RuleH) GetLBRule() ([]cmn.LbRuleMod, error) {
 			ret.Serv.ServPortMax = 0
 		}
 		ret.Serv.Sel = data.act.action.(*ruleLBActs).sel
+		if ret.Serv.Sel == cmn.LbSelQuicCID {
+			ret.Serv.QuicLb = &cmn.QuicLbArg{
+				SidLen: data.act.action.(*ruleLBActs).quicSidLen,
+				Cr:     data.act.action.(*ruleLBActs).quicCr,
+			}
+		}
 		ret.Serv.Mode = data.act.action.(*ruleLBActs).mode
 		ret.Serv.Monitor = data.hChk.actChk
 		ret.Serv.InactiveTimeout = data.iTO
@@ -995,6 +1004,28 @@ func (R *RuleH) activateEPHostsProbe(r *ruleEnt, endpoints []ruleLBEp) {
 			ep.initProberOn = true
 		}
 	}
+}
+
+// GetLbQuicCidStats - Get the datapath selector counters of every LbSelQuicCID rule.
+// A rule whose counters cannot be read is left out
+func (R *RuleH) GetLbQuicCidStats() []cmn.LbQuicCidStats {
+	var res []cmn.LbQuicCidStats
+
+	for _, data := range R.tables[RtLB].eMap {
+		if data.act.action.(*ruleLBActs).sel != cmn.LbSelQuicCID {
+			continue
+		}
+		routed, unroutable, miss, ok := DpQuicCidStatsGet(int(data.ruleNum))
+		if !ok {
+			continue
+		}
+		rule := fmt.Sprintf("%s:%d/udp", data.tuples.l3Dst.addr.IP.String(), data.tuples.l4Dst.valMin)
+		if data.tuples.pref != 0 {
+			rule += fmt.Sprintf("#%d", data.tuples.pref)
+		}
+		res = append(res, cmn.LbQuicCidStats{Rule: rule, Routed: routed, Unroutable: unroutable, Miss: miss})
+	}
+	return res
 }
 
 // GetLBRuleByID - Get a LB rule by its identifier
@@ -1570,6 +1601,57 @@ func getLBConsolidatedEPs(oldEps []ruleLBEp, newEps []ruleLBEp, oper cmn.LBOp) (
 	return ruleChg, retEps, delEps
 }
 
+// validateQuicCidRule - checks that apply only to LbSelQuicCID rules. It returns the
+// server ID length and the config rotation value to program
+func validateQuicCidRule(serv *cmn.LbServiceArg, eps []cmn.LbEndPointArg) (uint8, uint8, error) {
+	var sidLen uint8 = cmn.QuicLbSidLen
+	var cr uint8
+
+	if serv.Proto != "udp" {
+		return 0, 0, errors.New("quic-cid-args error: protocol must be udp")
+	}
+	switch serv.Mode {
+	case cmn.LBModeDefault, cmn.LBModeOneArm, cmn.LBModeFullNAT, cmn.LBModeHostOneArm:
+	case cmn.LBModeDSR:
+		return 0, 0, errors.New("quic-cid-args error: dsr mode is not supported")
+	case cmn.LBModeFullProxy:
+		return 0, 0, errors.New("quic-cid-args error: fullproxy mode is not supported")
+	default:
+		return 0, 0, errors.New("quic-cid-args error: unknown mode")
+	}
+	if serv.Snat || serv.Egress {
+		return 0, 0, errors.New("quic-cid-args error: snat and egress rules are not supported")
+	}
+	if serv.ProxyProtocolV2 {
+		// The header would sit where the QUIC packet is expected
+		return 0, 0, errors.New("quic-cid-args error: proxyprotocolv2 is not supported")
+	}
+	if !tk.IsNetIPv4(serv.ServIP) || (serv.PrivateIP != "" && !tk.IsNetIPv4(serv.PrivateIP)) {
+		return 0, 0, errors.New("quic-cid-args error: service address must be ipv4")
+	}
+	seen := make(map[string]struct{}, len(eps))
+	for _, ep := range eps {
+		if !tk.IsNetIPv4(ep.EpIP) {
+			return 0, 0, errors.New("quic-cid-args error: end-point address must be ipv4")
+		}
+		// An end-point is found by its address, so two entries cannot share one
+		if _, dup := seen[ep.EpIP]; dup {
+			return 0, 0, errors.New("quic-cid-args error: end-point addresses must be unique")
+		}
+		seen[ep.EpIP] = struct{}{}
+	}
+	if serv.QuicLb != nil {
+		sidLen, cr = serv.QuicLb.SidLen, serv.QuicLb.Cr
+	}
+	if sidLen != cmn.QuicLbSidLen {
+		return 0, 0, errors.New("quic-cid-args error: sidLen must be 4")
+	}
+	if cr > cmn.QuicLbCrMax {
+		return 0, 0, errors.New("quic-cid-args error: cr must be 0 to 7")
+	}
+	return sidLen, cr, nil
+}
+
 // AddLbRule - Add a service LB rule. The service details are passed in serv argument,
 // and end-point information is passed in the slice servEndPoints. On success,
 // it will return 0 and nil error, else appropriate return code and error string will be set
@@ -1689,6 +1771,19 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 		return RuleArgsErr, errors.New("non-udp-n3-args error")
 	}
 
+	var quicSidLen, quicCr uint8
+	if serv.Sel == cmn.LbSelQuicCID {
+		var qerr error
+		if quicSidLen, quicCr, qerr = validateQuicCidRule(&serv, servEndPoints); qerr != nil {
+			return RuleArgsErr, qerr
+		}
+		if !DpQuicCidAvail() {
+			return RuleArgsErr, errors.New("quic-cid-args error: datapath built without the selector")
+		}
+	} else if serv.QuicLb != nil {
+		return RuleArgsErr, errors.New("quic-cid-args error: quicLb needs the quic-cid selector")
+	}
+
 	if len(servSecIPs) > 3 {
 		return RuleArgsErr, errors.New("secondaryIP-args len error")
 	}
@@ -1723,6 +1818,8 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 	}
 
 	lBActs.sel = serv.Sel
+	lBActs.quicSidLen = quicSidLen
+	lBActs.quicCr = quicCr
 	lBActs.mode = cmn.LBMode(serv.Mode)
 
 	if lBActs.mode == cmn.LBModeOneArm || lBActs.mode == cmn.LBModeFullNAT || lBActs.mode == cmn.LBModeHostOneArm || serv.Monitor {
@@ -1779,6 +1876,8 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 			eRule.hChk.prbReq != serv.ProbeReq || eRule.hChk.prbResp != serv.ProbeResp ||
 			eRule.hChk.actChk != serv.Monitor ||
 			eRule.pTO != serv.PersistTimeout || eRule.act.action.(*ruleLBActs).sel != lBActs.sel ||
+			eRule.act.action.(*ruleLBActs).quicSidLen != lBActs.quicSidLen ||
+			eRule.act.action.(*ruleLBActs).quicCr != lBActs.quicCr ||
 			eRule.act.action.(*ruleLBActs).mode != lBActs.mode ||
 			eRule.ppv2En != serv.ProxyProtocolV2 ||
 			len(allowedSources) != len(eRule.srcList) {
@@ -1874,6 +1973,8 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 		eRule.pTO = serv.PersistTimeout
 		eRule.ppv2En = serv.ProxyProtocolV2
 		eRule.act.action.(*ruleLBActs).sel = lBActs.sel
+		eRule.act.action.(*ruleLBActs).quicSidLen = lBActs.quicSidLen
+		eRule.act.action.(*ruleLBActs).quicCr = lBActs.quicCr
 
 		// Capture old endpoints before updating for selective session reset
 		oldEndPoints := eRule.act.action.(*ruleLBActs).endPoints
@@ -2001,6 +2102,9 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 		R.tables[RtLB].rArr[r.ruleNum] = r
 	}
 	R.flushLBCtEntries(r, CtFlushRidMatchOrZero)
+	if lBActs.sel == cmn.LbSelQuicCID {
+		DpQuicCidStatsClear(int(r.ruleNum))
+	}
 	r.DP(DpCreate)
 	DpBrokerSyncBarrier(mh.dp)
 	R.flushLBCtEntries(r, CtFlushRidZeroOnly)
@@ -3142,6 +3246,10 @@ func (r *ruleEnt) LB2DP(work DpWorkT) int {
 			nWork.EpSel = EpN2
 		case at.sel == cmn.LbSelN3:
 			nWork.EpSel = EpN3
+		case at.sel == cmn.LbSelQuicCID:
+			nWork.EpSel = EpQuicCID
+			nWork.QuicSidLen = at.quicSidLen
+			nWork.QuicCr = at.quicCr
 		default:
 			nWork.EpSel = EpRR
 		}

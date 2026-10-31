@@ -56,6 +56,20 @@ func ConfigPostLoadbalancer(params operations.PostConfigLoadbalancerParams, prin
 	lbRules.Serv.HostUrl = params.Attr.ServiceArguments.Host
 	lbRules.Serv.ProxyProtocolV2 = params.Attr.ServiceArguments.Proxyprotocolv2
 	lbRules.Serv.Egress = params.Attr.ServiceArguments.Egress
+	if q := params.Attr.ServiceArguments.QuicLb; q != nil {
+		// Checked before the narrowing: 260 must not arrive as 4
+		sidLen := int64(cmn.QuicLbSidLen)
+		if q.SidLen != nil {
+			sidLen = *q.SidLen
+		}
+		if sidLen != cmn.QuicLbSidLen {
+			return &ResultResponse{Result: "Error: quicLb sidLen must be 4"}
+		}
+		if q.Cr < 0 || q.Cr > cmn.QuicLbCrMax {
+			return &ResultResponse{Result: "Error: quicLb cr must be 0 to 7"}
+		}
+		lbRules.Serv.QuicLb = &cmn.QuicLbArg{SidLen: uint8(sidLen), Cr: uint8(q.Cr)}
+	}
 
 	if lbRules.Serv.Proto == "sctp" {
 		for _, data := range params.Attr.SecondaryIPs {
@@ -257,6 +271,10 @@ func ConfigGetLoadbalancer(params operations.GetConfigLoadbalancerAllParams, pri
 		tmpSvc.Host = lb.Serv.HostUrl
 		tmpSvc.Proxyprotocolv2 = lb.Serv.ProxyProtocolV2
 		tmpSvc.Egress = lb.Serv.Egress
+		if lb.Serv.QuicLb != nil {
+			sidLen := int64(lb.Serv.QuicLb.SidLen)
+			tmpSvc.QuicLb = &models.LoadbalanceEntryServiceArgumentsQuicLb{SidLen: &sidLen, Cr: int64(lb.Serv.QuicLb.Cr)}
+		}
 
 		tmpLB.ServiceArguments = &tmpSvc
 

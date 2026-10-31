@@ -528,12 +528,15 @@ type LoadbalanceEntryServiceArguments struct {
 	// flag to enable proxy protocol v2
 	Proxyprotocolv2 bool `json:"proxyprotocolv2,omitempty"`
 
+	// quic lb
+	QuicLb *LoadbalanceEntryServiceArgumentsQuicLb `json:"quicLb,omitempty"`
+
 	// value for Security mode (0-Plain, 1-https, 1-tls, 2-e2ehttps, 0-default)
 	// Enum: [0 1 2]
 	Security int32 `json:"security,omitempty"`
 
-	// value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 0-default)
-	// Enum: [0 1 2 3 4 5 6]
+	// value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 7-quic-cid, 0-default)
+	// Enum: [0 1 2 3 4 5 6 7]
 	Sel int64 `json:"sel,omitempty"`
 
 	// snat rule
@@ -565,6 +568,10 @@ func (m *LoadbalanceEntryServiceArguments) Validate(formats strfmt.Registry) err
 	}
 
 	if err := m.validateProtocol(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := m.validateQuicLb(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -771,6 +778,25 @@ func (m *LoadbalanceEntryServiceArguments) validateProtocol(formats strfmt.Regis
 	return nil
 }
 
+func (m *LoadbalanceEntryServiceArguments) validateQuicLb(formats strfmt.Registry) error {
+	if swag.IsZero(m.QuicLb) { // not required
+		return nil
+	}
+
+	if m.QuicLb != nil {
+		if err := m.QuicLb.Validate(formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("serviceArguments" + "." + "quicLb")
+			} else if ce, ok := err.(*errors.CompositeError); ok {
+				return ce.ValidateName("serviceArguments" + "." + "quicLb")
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
 var loadbalanceEntryServiceArgumentsTypeSecurityPropEnum []interface{}
 
 func init() {
@@ -808,7 +834,7 @@ var loadbalanceEntryServiceArgumentsTypeSelPropEnum []interface{}
 
 func init() {
 	var res []int64
-	if err := json.Unmarshal([]byte(`[0,1,2,3,4,5,6]`), &res); err != nil {
+	if err := json.Unmarshal([]byte(`[0,1,2,3,4,5,6,7]`), &res); err != nil {
 		panic(err)
 	}
 	for _, v := range res {
@@ -837,8 +863,33 @@ func (m *LoadbalanceEntryServiceArguments) validateSel(formats strfmt.Registry) 
 	return nil
 }
 
-// ContextValidate validates this loadbalance entry service arguments based on context it is used
+// ContextValidate validate this loadbalance entry service arguments based on the context it is used
 func (m *LoadbalanceEntryServiceArguments) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	var res []error
+
+	if err := m.contextValidateQuicLb(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
+	if len(res) > 0 {
+		return errors.CompositeValidationError(res...)
+	}
+	return nil
+}
+
+func (m *LoadbalanceEntryServiceArguments) contextValidateQuicLb(ctx context.Context, formats strfmt.Registry) error {
+
+	if m.QuicLb != nil {
+		if err := m.QuicLb.ContextValidate(ctx, formats); err != nil {
+			if ve, ok := err.(*errors.Validation); ok {
+				return ve.ValidateName("serviceArguments" + "." + "quicLb")
+			} else if ce, ok := err.(*errors.CompositeError); ok {
+				return ce.ValidateName("serviceArguments" + "." + "quicLb")
+			}
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -853,6 +904,46 @@ func (m *LoadbalanceEntryServiceArguments) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary interface implementation
 func (m *LoadbalanceEntryServiceArguments) UnmarshalBinary(b []byte) error {
 	var res LoadbalanceEntryServiceArguments
+	if err := swag.ReadJSON(b, &res); err != nil {
+		return err
+	}
+	*m = res
+	return nil
+}
+
+// LoadbalanceEntryServiceArgumentsQuicLb QUIC-LB parameters, only with sel 7 (quic-cid)
+//
+// swagger:model LoadbalanceEntryServiceArgumentsQuicLb
+type LoadbalanceEntryServiceArgumentsQuicLb struct {
+
+	// config rotation value the connection IDs carry, 0-7. The default is 0
+	Cr int64 `json:"cr,omitempty"`
+
+	// server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default
+	SidLen *int64 `json:"sidLen,omitempty"`
+}
+
+// Validate validates this loadbalance entry service arguments quic lb
+func (m *LoadbalanceEntryServiceArgumentsQuicLb) Validate(formats strfmt.Registry) error {
+	return nil
+}
+
+// ContextValidate validates this loadbalance entry service arguments quic lb based on context it is used
+func (m *LoadbalanceEntryServiceArgumentsQuicLb) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	return nil
+}
+
+// MarshalBinary interface implementation
+func (m *LoadbalanceEntryServiceArgumentsQuicLb) MarshalBinary() ([]byte, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return swag.WriteJSON(m)
+}
+
+// UnmarshalBinary interface implementation
+func (m *LoadbalanceEntryServiceArgumentsQuicLb) UnmarshalBinary(b []byte) error {
+	var res LoadbalanceEntryServiceArgumentsQuicLb
 	if err := swag.ReadJSON(b, &res); err != nil {
 		return err
 	}

@@ -277,6 +277,7 @@ const (
 	EpLeastConn
 	EpN2
 	EpN3
+	EpQuicCID
 )
 
 // NatEP - a nat end-point
@@ -319,6 +320,9 @@ type LBDpWorkQ struct {
 	PersistTo uint64
 	endPoints []NatEP
 	secIP     []net.IP
+	// QuicSidLen, QuicCr - only with EpQuicCID
+	QuicSidLen uint8
+	QuicCr     uint8
 }
 
 // LBCtDpWorkQ - work queue entry for service-level CT/FC cleanup

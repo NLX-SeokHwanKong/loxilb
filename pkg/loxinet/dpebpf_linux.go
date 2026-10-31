@@ -36,6 +36,8 @@ package loxinet
 #include "../../loxilb-ebpf/kernel/loxilb_libdp.h"
 int bpf_map_get_next_key(int fd, const void *key, void *next_key);
 int bpf_map_lookup_elem(int fd, const void *key, void *value);
+int bpf_map_update_elem(int fd, const void *key, const void *value, __u64 flags);
+int bpf_obj_get(const char *pathname);
 int llb_flush_ct_by_nat(void *k, uint32_t rid);
 extern void goMapNotiHandler(struct ll_dp_map_notif *);
 extern void goProxyEntCollector(struct dp_proxy_ct_ent *);
@@ -1079,6 +1081,10 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 		dat.sel_type = C.NAT_LB_SEL_N2
 	case w.EpSel == EpN3:
 		dat.sel_type = C.NAT_LB_SEL_N3
+	case w.EpSel == EpQuicCID:
+		dat.sel_type = C.NAT_LB_SEL_QUIC_CID
+		dat.quic_sid_len = C.uchar(w.QuicSidLen)
+		dat.quic_cr = C.uchar(w.QuicCr)
 	/* Currently not implemented in DP */
 	/*case w.EpSel == EP_PRIO:
 	  dat.sel_type = C.NAT_LB_SEL_PRIO*/
@@ -1197,6 +1203,57 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 	}
 
 	return EbpfErrWqUnk
+}
+
+// quicCidStatsFd - opens the selector's counter map. libloxilbdp has no table entry
+// for it, so it is reached through its pin. The map does not exist in a datapath
+// built without the selector, which gives a negative fd
+func quicCidStatsFd() C.int {
+	path := C.CString(C.LLB_DB_MAP_PDIR + "/quic_cid_stats")
+	defer C.free(unsafe.Pointer(path))
+	return C.bpf_obj_get(path)
+}
+
+// DpQuicCidAvail - tells whether the datapath has the QUIC CID selector
+func DpQuicCidAvail() bool {
+	fd := quicCidStatsFd()
+	if fd < 0 {
+		return false
+	}
+	C.close(fd)
+	return true
+}
+
+// DpQuicCidStatsGet - reads the selector counters of a rule by its mark, and whether
+// it could. Each counter is a single atomically updated word, read without locks, so
+// each is exact on its own but the three may be from slightly different moments
+func DpQuicCidStatsGet(mark int) (routed, unroutable, miss uint64, ok bool) {
+	var st C.struct_dp_quic_cid_stats
+
+	fd := quicCidStatsFd()
+	if fd < 0 {
+		return 0, 0, 0, false
+	}
+	defer C.close(fd)
+	key := C.uint(mark)
+	if C.bpf_map_lookup_elem(fd, unsafe.Pointer(&key), unsafe.Pointer(&st)) != 0 {
+		return 0, 0, 0, false
+	}
+	return uint64(st.routed), uint64(st.unroutable), uint64(st.miss), true
+}
+
+// DpQuicCidStatsClear - zeroes the selector counters of a rule by its mark, which a
+// new rule can inherit from a deleted one or from an earlier run
+func DpQuicCidStatsClear(mark int) {
+	var st C.struct_dp_quic_cid_stats
+
+	fd := quicCidStatsFd()
+	if fd < 0 {
+		return
+	}
+	defer C.close(fd)
+	key := C.uint(mark)
+	C.bpf_map_update_elem(fd, unsafe.Pointer(&key), unsafe.Pointer(&st), 0)
 }
 
 // DpLBRuleAdd - routine to work on a ebpf lb add request

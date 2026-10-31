@@ -29,6 +29,20 @@ const (
 type DpEbpfH struct {
 }
 
+// DpQuicCidAvail - tells whether the datapath has the QUIC CID selector
+func DpQuicCidAvail() bool {
+	return false
+}
+
+// DpQuicCidStatsGet - reads the selector counters of a rule by its mark
+func DpQuicCidStatsGet(mark int) (routed, unroutable, miss uint64, ok bool) {
+	return 0, 0, 0, false
+}
+
+// DpQuicCidStatsClear - zeroes the selector counters of a rule by its mark
+func DpQuicCidStatsClear(mark int) {
+}
+
 func DpEbpfInit() *DpEbpfH {
 	ne := new(DpEbpfH)
 	return ne

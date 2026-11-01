@@ -1,0 +1,83 @@
+name: Fork-CLoad
+
+# Fork-only verifier report. Lives on its own branch and never goes into an upstream PR.
+#
+# Builds the image from the two refs below, starts it on each runner's kernel, and reports verified
+# instructions per eBPF program. A push trigger, because workflow_dispatch only sees workflows on the
+# default branch: to measure another ref, edit the two values on this branch and push.
+#
+# The submodule is checked out from this owner's loxilb-ebpf, not through .gitmodules, so that a parent
+# commit can be measured with an ebpf commit that is not upstream yet. The parent's gitlink is ignored.
+
+on:
+  push:
+    branches: [ "fork/qlb-cload" ]
+
+env:
+  PARENT_REF: feat/quic-cid-lb
+  EBPF_REF: feat/quic-cid-lb
+
+permissions:
+  contents: read
+
+jobs:
+  cload:
+    if: github.repository != 'loxilb-io/loxilb'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ ubuntu-22.04, ubuntu-24.04 ]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Tools from this branch
+        uses: actions/checkout@v4
+        with:
+          path: tools
+          persist-credentials: false
+
+      - name: Parent under test
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PARENT_REF }}
+          path: src
+          persist-credentials: false
+
+      - name: Submodule under test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/loxilb-ebpf
+          ref: ${{ env.EBPF_REF }}
+          path: src/loxilb-ebpf
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build the image as Dockerfile does (clang-14 toolchain)
+        run: docker build -t loxilb:cload src
+
+      - name: Load and report
+        run: tools/.github/cload/cload.sh loxilb:cload "cload-${{ matrix.runner }}.csv"
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.runner }}, kernel $(uname -r)"
+            echo "parent \`$(git -C src rev-parse HEAD)\`, ebpf \`$(git -C src/loxilb-ebpf rev-parse HEAD)\`"
+            echo
+            echo "| Program | Instances | Verified insns | Xlated insns | Margin to 1M |"
+            echo "|---|---|---|---|---|"
+            tail -n +2 "cload-${{ matrix.runner }}.csv" | sed 's/^/| /; s/,/ | /g; s/$/ |/'
+            echo
+            echo "Object hashes, to show both runners measured the same build:"
+            echo '```'
+            docker run --rm --entrypoint sh loxilb:cload -c 'cd /opt/loxilb && sha256sum *.o'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cload-${{ matrix.runner }}
+          path: cload-${{ matrix.runner }}.csv
+          if-no-files-found: warn

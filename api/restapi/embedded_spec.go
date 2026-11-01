@@ -7040,6 +7040,21 @@ func init() {
               "description": "flag to enable proxy protocol v2",
               "type": "boolean"
             },
+            "quicLb": {
+              "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
+              "type": "object",
+              "properties": {
+                "cr": {
+                  "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
+                  "type": "integer"
+                },
+                "sidLen": {
+                  "description": "server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default",
+                  "type": "integer",
+                  "x-nullable": true
+                }
+              }
+            },
             "security": {
               "description": "value for Security mode (0-Plain, 1-https, 1-tls, 2-e2ehttps, 0-default)",
               "type": "integer",
@@ -7051,7 +7066,7 @@ func init() {
               ]
             },
             "sel": {
-              "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 0-default)",
+              "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 7-quic-cid, 0-default)",
               "type": "integer",
               "enum": [
                 0,
@@ -7060,7 +7075,8 @@ func init() {
                 3,
                 4,
                 5,
-                6
+                6,
+                7
               ]
             },
             "snat": {
@@ -15606,6 +15622,21 @@ func init() {
               "description": "flag to enable proxy protocol v2",
               "type": "boolean"
             },
+            "quicLb": {
+              "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
+              "type": "object",
+              "properties": {
+                "cr": {
+                  "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
+                  "type": "integer"
+                },
+                "sidLen": {
+                  "description": "server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default",
+                  "type": "integer",
+                  "x-nullable": true
+                }
+              }
+            },
             "security": {
               "description": "value for Security mode (0-Plain, 1-https, 1-tls, 2-e2ehttps, 0-default)",
               "type": "integer",
@@ -15617,7 +15648,7 @@ func init() {
               ]
             },
             "sel": {
-              "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 0-default)",
+              "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 7-quic-cid, 0-default)",
               "type": "integer",
               "enum": [
                 0,
@@ -15626,7 +15657,8 @@ func init() {
                 3,
                 4,
                 5,
-                6
+                6,
+                7
               ]
             },
             "snat": {
@@ -15812,6 +15844,21 @@ func init() {
           "description": "flag to enable proxy protocol v2",
           "type": "boolean"
         },
+        "quicLb": {
+          "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
+          "type": "object",
+          "properties": {
+            "cr": {
+              "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
+              "type": "integer"
+            },
+            "sidLen": {
+              "description": "server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default",
+              "type": "integer",
+              "x-nullable": true
+            }
+          }
+        },
         "security": {
           "description": "value for Security mode (0-Plain, 1-https, 1-tls, 2-e2ehttps, 0-default)",
           "type": "integer",
@@ -15823,7 +15870,7 @@ func init() {
           ]
         },
         "sel": {
-          "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 0-default)",
+          "description": "value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 7-quic-cid, 0-default)",
           "type": "integer",
           "enum": [
             0,
@@ -15832,12 +15879,28 @@ func init() {
             3,
             4,
             5,
-            6
+            6,
+            7
           ]
         },
         "snat": {
           "description": "snat rule",
           "type": "boolean"
+        }
+      }
+    },
+    "LoadbalanceEntryServiceArgumentsQuicLb": {
+      "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
+      "type": "object",
+      "properties": {
+        "cr": {
+          "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
+          "type": "integer"
+        },
+        "sidLen": {
+          "description": "server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default",
+          "type": "integer",
+          "x-nullable": true
         }
       }
     },

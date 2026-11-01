@@ -389,6 +389,16 @@ func (na *NetAPIStruct) NetLbRuleGet() ([]cmn.LbRuleMod, error) {
 	return ret, err
 }
 
+// NetLbQuicCidStatsGet - Get the selector counters of the quic-cid rules from loxinet
+func (na *NetAPIStruct) NetLbQuicCidStatsGet() ([]cmn.LbQuicCidStats, error) {
+	if na.BgpPeerMode {
+		return nil, errors.New("running in bgp only mode")
+	}
+	mh.mtx.RLock()
+	defer mh.mtx.RUnlock()
+	return mh.zr.Rules.GetLbQuicCidStats(), nil
+}
+
 // NetCtInfoGet - Get connection track info from loxinet
 func (na *NetAPIStruct) NetCtInfoGet() ([]cmn.CtInfo, error) {
 	if na.BgpPeerMode {

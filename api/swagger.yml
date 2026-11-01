@@ -4014,8 +4014,19 @@ definitions:
             description:  value for access protocol
           sel:
             type: integer
-            enum: [0,1,2,3,4,5,6]
-            description: value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 0-default)
+            enum: [0,1,2,3,4,5,6,7]
+            description: value for load balance algorithim(0-rr, 1-hash, 2-priority, 3-persist, 4-lc, 5-n2, 6-n3, 7-quic-cid, 0-default)
+          quicLb:
+            type: object
+            description: QUIC-LB parameters, only with sel 7 (quic-cid)
+            properties:
+              sidLen:
+                type: integer
+                x-nullable: true
+                description: server ID length in bytes. Only 4, the end-point's IPv4 address, which is also the default
+              cr:
+                type: integer
+                description: config rotation value the connection IDs carry, 0-7. The default is 0
           bgp:
             type: boolean
             description: value for BGP enable or not

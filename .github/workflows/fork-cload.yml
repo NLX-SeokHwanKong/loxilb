@@ -14,8 +14,8 @@ on:
     branches: [ "fork/qlb-cload" ]
 
 env:
-  PARENT_REF: feat/quic-cid-lb
-  EBPF_REF: feat/quic-cid-lb
+  PARENT_REF: feat/qlb-p3-api
+  EBPF_REF: feat/qlb-p2-selector
 
 permissions:
   contents: read

@@ -2855,3 +2855,13 @@ func SysctlInit() {
 func SysctlPostInit() {
 	utils.WriteFile("/proc/sys/net/ipv4/conf/llb0/rp_filter", "0")
 }
+
+// drainCIDService returns only after a second pass confirms no owned entries remain.
+func drainCIDService(vip net.IP, zone int, port uint16, rid uint32) (uint32, uint32, error) {
+	var ct, fc C.uint
+	rc := C.llb_cid_handoff_drain(C.uint(tk.IPtonl(vip)), C.ushort(zone), C.ushort(tk.Htons(port)), C.uint(rid), &ct, &fc)
+	if rc != 0 {
+		return uint32(ct), uint32(fc), syscall.Errno(-rc)
+	}
+	return uint32(ct), uint32(fc), nil
+}

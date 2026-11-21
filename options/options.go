@@ -8,6 +8,7 @@ import (
 )
 
 var Opts struct {
+	CIDHandoff           string         `long:"cid-handoff" description:"Enable local fenced CID drain for a dedicated IPv4 VIP@frontIf,backIf"`
 	Bgp                  bool           `short:"b" long:"bgp" description:"Connect and Sync with GoBGP server"`
 	Ka                   string         `short:"k" long:"ka" description:"KeepAlive/BFD RemoteIP:SourceIP:Interval" default:"none"`
 	Version              bool           `short:"v" long:"version" description:"Show loxilb version"`

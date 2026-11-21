@@ -56,3 +56,7 @@ func SysctlInit() {
 
 func SysctlPostInit() {
 }
+
+func startCIDHandoff(string, int) error {
+	return fmt.Errorf("CID handoff requires the Linux eBPF datapath")
+}

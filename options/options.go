@@ -2,12 +2,26 @@ package options
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/jessevdk/go-flags"
 )
 
+// TCPReturnVIP is a repeatable, exact IPv4 service address.
+type TCPReturnVIP string
+
+func (v *TCPReturnVIP) UnmarshalFlag(value string) error {
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() || !addr.IsGlobalUnicast() {
+		return fmt.Errorf("tcp-return-vip requires a unicast IPv4 service address: %q", value)
+	}
+	*v = TCPReturnVIP(addr.String())
+	return nil
+}
+
 var Opts struct {
+	TCPReturnVIPs        []TCPReturnVIP `long:"tcp-return-vip" description:"Prepare backup return neighbors for an IPv4 TCP FullNAT VIP (repeat for additional VIPs)"`
 	CIDHandoff           string         `long:"cid-handoff" description:"Enable local fenced CID drain for a dedicated IPv4 VIP@frontIf,backIf"`
 	Bgp                  bool           `short:"b" long:"bgp" description:"Connect and Sync with GoBGP server"`
 	Ka                   string         `short:"k" long:"ka" description:"KeepAlive/BFD RemoteIP:SourceIP:Interval" default:"none"`

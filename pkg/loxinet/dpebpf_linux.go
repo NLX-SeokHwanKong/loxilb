@@ -42,6 +42,10 @@ int llb_flush_ct_by_nat(void *k, uint32_t rid);
 extern void goMapNotiHandler(struct ll_dp_map_notif *);
 extern void goProxyEntCollector(struct dp_proxy_ct_ent *);
 extern void goLinuxArpResolver(unsigned int);
+static inline bool return_prep_forward(const struct dp_ct_tact *a) {
+  return a->ctd.dir == CT_DIR_IN && a->ca.act_type == DP_SET_DNAT &&
+         !a->nat_act.nv6 && !a->nat_act.dsr && a->nat_act.rip[0] && a->nat_act.xip[0];
+}
 #cgo CFLAGS:  -I./../../loxilb-ebpf/libbpf/src/ -I./../../loxilb-ebpf/common
 #cgo LDFLAGS: -L. -L/lib64 -L./../../loxilb-ebpf/kernel -L./../../loxilb-ebpf/libbpf/src/build/usr/lib64/ -Wl,-rpath=/lib64/ -l:./../../loxilb-ebpf/kernel/libloxilbdp.a -l:./../../loxilb-ebpf/libbpf/src/libbpf.a -lelf -lz -lssl -lcrypto
 */
@@ -157,6 +161,8 @@ var (
 
 // DpEbpfH - context container
 type DpEbpfH struct {
+	returnPrep *tcpReturnPrep
+
 	ticker  *time.Ticker
 	tDone   chan bool
 	trigGC  chan bool
@@ -358,6 +364,10 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 	// registered lazily and simply never scraped.
 	prom.SetConntrackMaxEntries(int(C.LLB_CT_MAP_ENTRIES))
 
+	if clusterEn && !disBPF {
+		ne.returnPrep = newTCPReturnPrep(ne)
+	}
+
 	go dpEbpfTicker()
 	for i := 0; i < mapNotifierWorkers; i++ {
 		go dpMapNotifierWorker(ne.ToFinCh[i], ne.ToMapCh)
@@ -369,6 +379,9 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 // DpEbpfUnInit - uninitialize the ebpf dp subsystem
 func (e *DpEbpfH) DpEbpfUnInit() {
 
+	if e.returnPrep != nil {
+		e.returnPrep.stop()
+	}
 	e.tDone <- true
 	for i := 0; i < mapNotifierWorkers; i++ {
 		e.ToFinCh[i] <- 1
@@ -2794,6 +2807,13 @@ func (e *DpEbpfH) DpCtAdd(w *DpCtInfo) int {
 		return EbpfErrCtAdd
 	}
 
+	if e.returnPrep != nil && len(w.PKey) == C.sizeof_struct_dp_ct_key && len(w.PVal) == C.sizeof_struct_dp_ct_tact && bool(C.return_prep_forward(ptact)) {
+		k := (*C.struct_dp_ct_key)(unsafe.Pointer(&w.PKey[0]))
+		if k.v6 == 0 && k.l4proto == syscall.IPPROTO_TCP && int(k.zone) == mh.zr.ZoneNum &&
+			w.SIP.Equal(tk.NltoIP(uint32(k.saddr[0]))) && w.DIP.Equal(tk.NltoIP(uint32(k.daddr[0]))) {
+			e.returnPrep.offer(mapKey, cte, cti, r)
+		}
+	}
 	return 0
 }
 

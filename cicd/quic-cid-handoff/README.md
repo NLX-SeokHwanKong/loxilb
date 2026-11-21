@@ -22,3 +22,22 @@ QMZ_TEST_IMAGE="$CANDIDATE" QMZ_DETECTOR=bfd QMZ_DRAIN=selective QMZ_VERIFY_SCOP
 5. The harness deletes its containers and network namespaces on exit. For rollback, keep the candidate fenced and resume the earlier natural-drain release using the same ownership and history checks.
 
 The excluded-backend history still requires a live donor. The fork does not elect a replacement from BFD alone.
+
+## Established IPv4 TCP FullNAT during native BFD failover
+
+Use the same isolated Linux host and the two fork images. The TCP fixture starts two native BFD peers (200 ms × 3), XSync, one backend and a client that opens the held socket only once. Run from this directory in a root shell. Use bash with pipefail so a failed trial is visible.
+
+```bash
+set -o pipefail
+QMZ_TEST_IMAGE="$BASE" python3 -u tcp-path.py tcp-before | tee tcp-before.jsonl
+QMZ_TEST_IMAGE="$CANDIDATE" python3 -u tcp-path.py tcp-after | tee tcp-after.jsonl
+FLIP=1 QMZ_TEST_IMAGE="$CANDIDATE" python3 -u tcp-path.py tcp-reversed | tee tcp-reversed.jsonl
+python3 check-packets.py --expect lost tcp-before
+python3 check-packets.py --expect kept tcp-after tcp-reversed
+QMZ_TEST_IMAGE="$BASE" python3 -u steady.py steady-before | tee steady-before.jsonl
+QMZ_TEST_IMAGE="$CANDIDATE" python3 -u steady.py steady-after | tee steady-after.jsonl
+```
+
+The baseline assertion applies to parent `90cbcd73` with eBPF `68c2f56e`. Inspect the original client SYN, the unacknowledged payload and its TCP sequence number on the promoted wire, the backend destination MAC, and the returned ACK in `packet-verdict.json`. Compare `*-promoted.json` and `*-plus3.json` on the candidate. The expected forward action list after recovery is 2, 3, 5 (DNAT, neighbor rewrite, output). The trial changes only its own veths and leaves its raw captures and map snapshots in the named directory.
+
+Install iperf3 on the host for the steady-flow test. Compare receiver goodput using alternating image order on an idle host. The warm interval uses 1,000 TCP echoes, the forward CT packet counter and the CT slow-path last-use timestamp. L2 checks configure bridge domain 77 and verify both endpoint MACs in the eBPF destination map. DSR checks put a /32 on the backend and capture replies on a separate direct interface. Run the two MASQUE modes above to check the independent CID failover and legacy sockets.

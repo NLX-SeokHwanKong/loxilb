@@ -1103,6 +1103,9 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 	if w.SrcCheck {
 		dat.opflags = C.NAT_LB_OP_CHKSRC
 	}
+	if w.TCPFullNATFC {
+		dat.opflags |= C.NAT_LB_OP_TCP_FULLNAT_FC
+	}
 	if w.NatType == DpFullNat && w.EpSel == EpQuicCID && w.Proto == syscall.IPPROTO_UDP && !w.DsrMode {
 		dat.opflags |= C.NAT_LB_OP_CID_REPLY_GUARD
 	}

@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/loxilb-io/loxilb/api/loxinlp"
@@ -3291,6 +3292,7 @@ func (r *ruleEnt) LB2DP(work DpWorkT) int {
 			nWork.EpSel = EpRR
 		}
 		mode = at.mode
+		nWork.TCPFullNATFC = mode == cmn.LBModeFullNAT && r.tuples.l3Dst.addr.IP.To4() != nil && r.tuples.l4Prot.val == syscall.IPPROTO_TCP
 		if mode == cmn.LBModeDSR {
 			nWork.DsrMode = true
 		}

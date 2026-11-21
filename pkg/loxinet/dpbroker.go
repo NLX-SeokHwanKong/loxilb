@@ -321,8 +321,9 @@ type LBDpWorkQ struct {
 	endPoints []NatEP
 	secIP     []net.IP
 	// QuicSidLen, QuicCr - only with EpQuicCID
-	QuicSidLen uint8
-	QuicCr     uint8
+	QuicSidLen  uint8
+	QuicCr      uint8
+	QuicProfile string
 }
 
 // LBCtDpWorkQ - work queue entry for service-level CT/FC cleanup

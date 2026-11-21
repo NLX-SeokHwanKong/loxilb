@@ -555,6 +555,8 @@ const (
 	QuicLbSidLen = 4
 	// QuicLbCrMax - highest config rotation value of a LbSelQuicCID rule
 	QuicLbCrMax = 7
+	// QuicLbProfileMvfstV3 reads the mvfst V3 IPv4 server ID.
+	QuicLbProfileMvfstV3 = "mvfst-v3"
 )
 
 // LBMode - Variable to define LB mode
@@ -660,6 +662,8 @@ type LbServiceArg struct {
 
 // QuicLbArg - QUIC-LB parameters of a LbSelQuicCID rule
 type QuicLbArg struct {
+	// Profile defaults to the legacy plaintext CID format.
+	Profile string `json:"profile,omitempty"`
 	// SidLen - length in bytes of the server ID. Only QuicLbSidLen is accepted
 	SidLen uint8 `json:"sidLen"`
 	// Cr - config rotation value the connection IDs carry, 0 to QuicLbCrMax

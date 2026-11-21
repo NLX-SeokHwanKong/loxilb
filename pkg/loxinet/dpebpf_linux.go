@@ -47,6 +47,7 @@ extern void goLinuxArpResolver(unsigned int);
 */
 import "C"
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -310,6 +311,7 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 
 	DpEbpfDPLogLevel(&cfg, logLevel)
 
+	quicV3Available = !disBPF && verifyQuicV3Objects()
 	C.loxilb_main(&cfg)
 
 	// Make sure to unload eBPF programs at init time
@@ -1085,6 +1087,9 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 		dat.sel_type = C.NAT_LB_SEL_QUIC_CID
 		dat.quic_sid_len = C.uchar(w.QuicSidLen)
 		dat.quic_cr = C.uchar(w.QuicCr)
+		if w.QuicProfile == cmn.QuicLbProfileMvfstV3 {
+			dat.quic_profile = C.LLB_QUIC_PROFILE_MVFST_V3
+		}
 	/* Currently not implemented in DP */
 	/*case w.EpSel == EP_PRIO:
 	  dat.sel_type = C.NAT_LB_SEL_PRIO*/
@@ -1097,6 +1102,9 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 	}
 	if w.SrcCheck {
 		dat.opflags = C.NAT_LB_OP_CHKSRC
+	}
+	if w.NatType == DpFullNat && w.EpSel == EpQuicCID && w.Proto == syscall.IPPROTO_UDP && !w.DsrMode {
+		dat.opflags |= C.NAT_LB_OP_CID_REPLY_GUARD
 	}
 	if w.Ppv2En {
 		dat.ppv2 = 1
@@ -1222,6 +1230,29 @@ func DpQuicCidAvail() bool {
 	}
 	C.close(fd)
 	return true
+}
+
+// quicV3ObjectDigests is injected when the matching V3-enabled objects are built.
+var quicV3ObjectDigests string
+var quicV3Available bool
+
+func verifyQuicV3Objects() bool {
+	expected := strings.Split(quicV3ObjectDigests, ",")
+	paths := [...]string{C.LLB_FP_IMG_BPF, C.LLB_FP_IMG_BPF_EGR, C.LLB_FP_IMG_DEFAULT}
+	if len(expected) != len(paths) {
+		return false
+	}
+	for i, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func DpQuicV3Avail() bool {
+	return quicV3Available
 }
 
 // DpQuicCidStatsGet - reads the selector counters of a rule by its mark, and whether

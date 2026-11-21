@@ -68,7 +68,7 @@ func ConfigPostLoadbalancer(params operations.PostConfigLoadbalancerParams, prin
 		if q.Cr < 0 || q.Cr > cmn.QuicLbCrMax {
 			return &ResultResponse{Result: "Error: quicLb cr must be 0 to 7"}
 		}
-		lbRules.Serv.QuicLb = &cmn.QuicLbArg{SidLen: uint8(sidLen), Cr: uint8(q.Cr)}
+		lbRules.Serv.QuicLb = &cmn.QuicLbArg{Profile: q.Profile, SidLen: uint8(sidLen), Cr: uint8(q.Cr)}
 	}
 
 	if lbRules.Serv.Proto == "sctp" {
@@ -273,7 +273,7 @@ func ConfigGetLoadbalancer(params operations.GetConfigLoadbalancerAllParams, pri
 		tmpSvc.Egress = lb.Serv.Egress
 		if lb.Serv.QuicLb != nil {
 			sidLen := int64(lb.Serv.QuicLb.SidLen)
-			tmpSvc.QuicLb = &models.LoadbalanceEntryServiceArgumentsQuicLb{SidLen: &sidLen, Cr: int64(lb.Serv.QuicLb.Cr)}
+			tmpSvc.QuicLb = &models.LoadbalanceEntryServiceArgumentsQuicLb{Profile: lb.Serv.QuicLb.Profile, SidLen: &sidLen, Cr: int64(lb.Serv.QuicLb.Cr)}
 		}
 
 		tmpLB.ServiceArguments = &tmpSvc

@@ -7044,6 +7044,10 @@ func init() {
               "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
               "type": "object",
               "properties": {
+                "profile": {
+                  "description": "CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.",
+                  "type": "string"
+                },
                 "cr": {
                   "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
                   "type": "integer"
@@ -15626,6 +15630,10 @@ func init() {
               "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
               "type": "object",
               "properties": {
+                "profile": {
+                  "description": "CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.",
+                  "type": "string"
+                },
                 "cr": {
                   "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
                   "type": "integer"
@@ -15848,6 +15856,10 @@ func init() {
           "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
           "type": "object",
           "properties": {
+            "profile": {
+              "description": "CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.",
+              "type": "string"
+            },
             "cr": {
               "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
               "type": "integer"
@@ -15893,6 +15905,10 @@ func init() {
       "description": "QUIC-LB parameters, only with sel 7 (quic-cid)",
       "type": "object",
       "properties": {
+        "profile": {
+          "description": "CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.",
+          "type": "string"
+        },
         "cr": {
           "description": "config rotation value the connection IDs carry, 0-7. The default is 0",
           "type": "integer"

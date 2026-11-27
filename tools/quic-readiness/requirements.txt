@@ -1,0 +1,2 @@
+aiomoqt @ git+https://github.com/gmarzot/aiomoqt.git@76f29a85596237218c1ff91f2595c2e41606c303
+aiopquic==0.7.1

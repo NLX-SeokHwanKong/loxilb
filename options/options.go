@@ -46,6 +46,8 @@ var Opts struct {
 	Prometheus           bool           `short:"p" long:"prometheus" description:"Run prometheus thread"`
 	CRC32SumDisable      bool           `long:"disable-crc32" description:"Disable crc32 checksum update(experimental)"`
 	PassiveEPProbe       bool           `long:"passive-probe" description:"Enable passive liveness probes(experimental)"`
+	QuicHealthEvents     bool           `long:"quic-health-events" description:"Apply automatic health transitions to monitored mvfst-v3 VIPs without waiting for periodic rule sync"`
+	UDPSocketHealth      bool           `long:"udp-socket-health" description:"Check standard UDP endpoints with connected socket errors"`
 	RssEnable            bool           `long:"rss-enable" description:"Enable rss optimization(experimental)"`
 	EgrHooks             bool           `long:"egr-hooks" description:"Enable eBPF egress hooks(experimental)"`
 	BgpPeerMode          bool           `short:"r" long:"peer" description:"Run loxilb with goBGP only, no Datapath"`

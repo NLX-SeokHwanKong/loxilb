@@ -35,6 +35,7 @@ import (
 
 	"github.com/loxilb-io/loxilb/api/loxinlp"
 	cmn "github.com/loxilb-io/loxilb/common"
+	opts "github.com/loxilb-io/loxilb/options"
 	utils "github.com/loxilb-io/loxilb/pkg/utils"
 	tk "github.com/loxilb-io/loxilib"
 	probing "github.com/prometheus-community/pro-bing"
@@ -210,19 +211,20 @@ type epHostOpts struct {
 }
 
 type epHost struct {
-	epKey        string
-	hostName     string
-	hostState    string
-	ruleCount    int
-	inactive     bool
-	initProberOn bool
-	sT           time.Time
-	avgDelay     time.Duration
-	minDelay     time.Duration
-	maxDelay     time.Duration
-	hID          uint8
-	inActTries   int
-	opts         epHostOpts
+	epKey           string
+	hostName        string
+	hostState       string
+	ruleCount       int
+	inactive        bool
+	initProberOn    bool
+	sT              time.Time
+	avgDelay        time.Duration
+	minDelay        time.Duration
+	maxDelay        time.Duration
+	hID             uint8
+	inActTries      int
+	probeGeneration uint64
+	opts            epHostOpts
 }
 
 type ruleLBEp struct {
@@ -1008,6 +1010,7 @@ func (R *RuleH) activateEPHostsProbe(r *ruleEnt, endpoints []ruleLBEp) {
 		if ep != nil && !ep.opts.probeActivated {
 			ep.opts.probeActivated = true
 			ep.initProberOn = true
+			ep.probeGeneration++
 		}
 	}
 }
@@ -1368,6 +1371,8 @@ func (R *RuleH) mkHostAssocs(r *ruleEnt) bool {
 }
 
 func (R *RuleH) syncEPHostState2Rule(rule *ruleEnt, checkNow bool) bool {
+	R.epMx.RLock()
+	defer R.epMx.RUnlock()
 	var sType string
 	rChg := false
 	if checkNow || time.Duration(time.Now().Sub(rule.sT).Seconds()) >= time.Duration(R.cfg.RuleInactChkTime) {
@@ -2601,6 +2606,9 @@ func (R *RuleH) DeleteFwRule(fwRule cmn.FwRuleArg) (int, error) {
 
 // GetEpHosts - get all end-points and pack them into a cmn.EndPointMod slice
 func (R *RuleH) GetEpHosts() ([]cmn.EndPointMod, error) {
+	R.epMx.RLock()
+	defer R.epMx.RUnlock()
+
 	var res []cmn.EndPointMod
 
 	for _, data := range R.epMap {
@@ -2740,6 +2748,7 @@ func (R *RuleH) AddEPHost(apiCall bool, hostName string, name string, args epHos
 			}
 			ep.opts.currProbeDuration = ep.opts.probeDuration
 			ep.initProberOn = true
+			ep.probeGeneration++
 			return 0, nil
 		}
 		ep.ruleCount++
@@ -2891,6 +2900,29 @@ func (ep *epHost) transitionEPState(currState bool, inactThr int) {
 	}
 }
 
+// probeUDPSocket uses the connected socket's own ICMP error. Silence retains
+// the existing UDP port-probe convention of treating an unrefuted port as up.
+func probeUDPSocket(address string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("udp", address, timeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return false
+	}
+	if _, err := conn.Write([]byte("probe")); err != nil {
+		return false
+	}
+	var reply [1]byte
+	_, err = conn.Read(reply[:])
+	if err == nil {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func (R *RuleH) epCheckNow(ep *epHost) {
 	var sType string
 	sHint := ""
@@ -2939,8 +2971,11 @@ func (R *RuleH) epCheckNow(ep *epHost) {
 				}
 			}
 		}
-		sOk := tk.L4ServiceProber(sType, sName, sHint, ep.opts.probeReq, ep.opts.probeResp)
-		ep.transitionEPState(sOk, inActTryThr)
+		if opts.Opts.UDPSocketHealth && sType == "udp" && ep.opts.probeReq == "" && ep.opts.probeResp == "" {
+			ep.transitionEPState(probeUDPSocket(sName, time.Second), inActTryThr)
+		} else {
+			ep.transitionEPState(tk.L4ServiceProber(sType, sName, sHint, ep.opts.probeReq, ep.opts.probeResp), inActTryThr)
+		}
 	} else if ep.opts.probeType == HostProbePing {
 		pinger, err := probing.NewPinger(ep.hostName)
 		if err != nil {
@@ -3068,12 +3103,59 @@ func epTicker(R *RuleH, helper int) {
 
 			begin := time.Now()
 			for _, eph := range epHosts {
-				R.epCheckNow(eph)
-				eph.sT = time.Now()
-				if time.Duration(eph.sT.Sub(begin).Seconds()) >= EndPointCheckerDuration {
+				R.probeEPHost(eph)
+				if time.Since(begin) >= EndPointCheckerDuration*time.Second {
 					break
 				}
 			}
+		}
+	}
+}
+
+// probeEPHost checks a snapshot so network I/O cannot block endpoint updates.
+func (R *RuleH) probeEPHost(ep *epHost) {
+	R.epMx.RLock()
+	next := *ep
+	R.epMx.RUnlock()
+	R.epCheckNow(&next)
+	finished := time.Now()
+
+	R.epMx.Lock()
+	if R.epMap[next.epKey] != ep || next.probeGeneration != ep.probeGeneration {
+		R.epMx.Unlock()
+		return
+	}
+	changed := ep.inactive != next.inactive
+	ep.sT = finished
+	ep.inactive = next.inactive
+	ep.initProberOn = next.initProberOn
+	ep.inActTries = next.inActTries
+	ep.opts.currProbeDuration = next.opts.currProbeDuration
+	ep.avgDelay, ep.minDelay, ep.maxDelay = next.avgDelay, next.minDelay, next.maxDelay
+	R.epMx.Unlock()
+
+	if changed && next.opts.probeType == HostProbeConnectUDP && mh.quicHealthWake != nil {
+		tk.LogIt(tk.LogInfo, "quic health probe endpoint=%s inactive=%t time_ns=%d\n",
+			next.epKey, next.inactive, finished.UnixNano())
+		select {
+		case mh.quicHealthWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// syncMonitoredQuicHealth runs under the same lock as rule API updates.
+func (R *RuleH) syncMonitoredQuicHealth() {
+	for _, rule := range R.tables[RtLB].eMap {
+		action, ok := rule.act.action.(*ruleLBActs)
+		if !ok || !rule.hChk.actChk || action.sel != cmn.LbSelQuicCID ||
+			action.quicProfile != cmn.QuicLbProfileMvfstV3 {
+			continue
+		}
+		if R.syncEPHostState2Rule(rule, true) {
+			rule.DP(DpCreate)
+			tk.LogIt(tk.LogInfo, "quic health rule queued time_ns=%d %s\n",
+				time.Now().UnixNano(), rule.tuples.String())
 		}
 	}
 }

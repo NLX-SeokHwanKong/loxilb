@@ -511,6 +511,8 @@ const (
 	HostStateYellow = "yellow"
 	// HostStateRed - Host is not healthy
 	HostStateRed = "red"
+	// HostStateDrain closes new admission on monitored mvfst-v3 endpoints.
+	HostStateDrain = "drain"
 	// HostStateUnknown - Host state is not known
 	HostStateUnknown = ""
 )

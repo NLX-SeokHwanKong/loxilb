@@ -233,6 +233,7 @@ type ruleLBEp struct {
 	inActTries    int
 	inActiveEP    bool
 	noService     bool
+	draining      bool
 	chkVal        bool
 	epCreated     bool
 	stat          ruleStat
@@ -857,6 +858,8 @@ func (R *RuleH) GetLBRule() ([]cmn.LbRuleMod, error) {
 			state := "active"
 			if ep.noService {
 				state = "inactive"
+			} else if ep.draining {
+				state = "draining"
 			}
 
 			if ep.inActiveEP {
@@ -1383,8 +1386,16 @@ func (R *RuleH) syncEPHostState2Rule(rule *ruleEnt, checkNow bool) bool {
 			}
 
 			for idx, n := range na.endPoints {
-				sOk := R.IsEPHostActive(makeEPKey(n.xIP.String(), sType, n.xPort))
+				key := makeEPKey(n.xIP.String(), sType, n.xPort)
+				sOk := R.IsEPHostActive(key)
+				ep := R.epMap[key]
+				draining := sOk && ep != nil && ep.hostState == cmn.HostStateDrain &&
+					na.sel == cmn.LbSelQuicCID && na.quicProfile == cmn.QuicLbProfileMvfstV3
 				np := &na.endPoints[idx]
+				if np.draining != draining {
+					np.draining = draining
+					rChg = true
+				}
 				if sOk == false {
 					if np.noService == false {
 						np.noService = true
@@ -1872,7 +1883,7 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 		if lBActs.mode == cmn.LBModeDSR && k.EpPort != serv.ServPort {
 			return RuleUnknownServiceErr, errors.New("malformed-service dsr-port error")
 		}
-		ep := ruleLBEp{pNetAddr, xNetAddr, k.EpPort, k.Weight, 0, false, false, false, false, ruleStat{0, 0}, nil, ""}
+		ep := ruleLBEp{xIP: pNetAddr, rIP: xNetAddr, xPort: k.EpPort, weight: k.Weight}
 		lBActs.endPoints = append(lBActs.endPoints, ep)
 	}
 
@@ -1997,6 +2008,7 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 			// rotation forever
 			for idx := range retEps {
 				retEps[idx].noService = false
+				retEps[idx].draining = false
 				retEps[idx].inActTries = 0
 			}
 		}
@@ -2619,6 +2631,8 @@ func (R *RuleH) GetEpHosts() ([]cmn.EndPointMod, error) {
 
 		if data.hostState == cmn.HostStateRed {
 			ret.CurrState = "red"
+		} else if data.hostState == cmn.HostStateDrain && !data.inactive {
+			ret.CurrState = "draining"
 		}
 
 		// Append to slice
@@ -2800,8 +2814,12 @@ func (R *RuleH) DeleteEPHost(apiCall bool, name string, hostName string, probeTy
 // It will return 0 and nil error, else appropriate return code and error string will be set
 func (R *RuleH) SetEPHostState(hostName string, epPort uint16, epProto string, state string) (int, error) {
 
-	if state != cmn.HostStateGreen && state != cmn.HostStateYellow && state != cmn.HostStateRed {
+	if state != cmn.HostStateGreen && state != cmn.HostStateYellow && state != cmn.HostStateRed && state != cmn.HostStateDrain {
 		return RuleEpHostUnkErr, errors.New("unknown ep-host-state")
+	}
+
+	if state == cmn.HostStateDrain && (epPort == 0 || epProto != HostProbeConnectUDP) {
+		return RuleEpHostUnkErr, errors.New("drain requires a specific UDP endpoint")
 	}
 
 	key := ""
@@ -3370,6 +3388,7 @@ func (r *ruleEnt) LB2DP(work DpWorkT) int {
 						ep.RIP = kf.rIP
 						ep.XPort = kf.xPort
 						ep.Weight = kf.weight
+						ep.Draining = kf.draining
 						if kf.inActiveEP || kf.noService {
 							ep.InActive = true
 						}
@@ -3383,6 +3402,7 @@ func (r *ruleEnt) LB2DP(work DpWorkT) int {
 					ep.RIP = k.rIP
 					ep.XPort = k.xPort
 					ep.Weight = k.weight
+					ep.Draining = k.draining
 					if k.inActiveEP || k.noService {
 						ep.InActive = true
 					}

@@ -287,6 +287,7 @@ type NatEP struct {
 	XPort    uint16
 	Weight   uint8
 	InActive bool
+	Draining bool
 }
 
 // SecT - type of SecT

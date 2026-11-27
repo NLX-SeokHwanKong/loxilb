@@ -42,11 +42,16 @@ int llb_flush_ct_by_nat(void *k, uint32_t rid);
 extern void goMapNotiHandler(struct ll_dp_map_notif *);
 extern void goProxyEntCollector(struct dp_proxy_ct_ent *);
 extern void goLinuxArpResolver(unsigned int);
+static inline bool return_prep_forward(const struct dp_ct_tact *a) {
+  return a->ctd.dir == CT_DIR_IN && a->ca.act_type == DP_SET_DNAT &&
+         !a->nat_act.nv6 && !a->nat_act.dsr && a->nat_act.rip[0] && a->nat_act.xip[0];
+}
 #cgo CFLAGS:  -I./../../loxilb-ebpf/libbpf/src/ -I./../../loxilb-ebpf/common
 #cgo LDFLAGS: -L. -L/lib64 -L./../../loxilb-ebpf/kernel -L./../../loxilb-ebpf/libbpf/src/build/usr/lib64/ -Wl,-rpath=/lib64/ -l:./../../loxilb-ebpf/kernel/libloxilbdp.a -l:./../../loxilb-ebpf/libbpf/src/libbpf.a -lelf -lz -lssl -lcrypto
 */
 import "C"
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -156,6 +161,8 @@ var (
 
 // DpEbpfH - context container
 type DpEbpfH struct {
+	returnPrep *tcpReturnPrep
+
 	ticker  *time.Ticker
 	tDone   chan bool
 	trigGC  chan bool
@@ -310,6 +317,7 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 
 	DpEbpfDPLogLevel(&cfg, logLevel)
 
+	quicV3Available = !disBPF && verifyQuicV3Objects()
 	C.loxilb_main(&cfg)
 
 	// Make sure to unload eBPF programs at init time
@@ -356,6 +364,10 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 	// registered lazily and simply never scraped.
 	prom.SetConntrackMaxEntries(int(C.LLB_CT_MAP_ENTRIES))
 
+	if clusterEn && !disBPF {
+		ne.returnPrep = newTCPReturnPrep(ne)
+	}
+
 	go dpEbpfTicker()
 	for i := 0; i < mapNotifierWorkers; i++ {
 		go dpMapNotifierWorker(ne.ToFinCh[i], ne.ToMapCh)
@@ -367,6 +379,9 @@ func DpEbpfInit(clusterEn, rssEn, egrHooks, localSockPolicy, sockMapEn bool, nod
 // DpEbpfUnInit - uninitialize the ebpf dp subsystem
 func (e *DpEbpfH) DpEbpfUnInit() {
 
+	if e.returnPrep != nil {
+		e.returnPrep.stop()
+	}
 	e.tDone <- true
 	for i := 0; i < mapNotifierWorkers; i++ {
 		e.ToFinCh[i] <- 1
@@ -1085,6 +1100,9 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 		dat.sel_type = C.NAT_LB_SEL_QUIC_CID
 		dat.quic_sid_len = C.uchar(w.QuicSidLen)
 		dat.quic_cr = C.uchar(w.QuicCr)
+		if w.QuicProfile == cmn.QuicLbProfileMvfstV3 {
+			dat.quic_profile = C.LLB_QUIC_PROFILE_MVFST_V3
+		}
 	/* Currently not implemented in DP */
 	/*case w.EpSel == EP_PRIO:
 	  dat.sel_type = C.NAT_LB_SEL_PRIO*/
@@ -1097,6 +1115,12 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 	}
 	if w.SrcCheck {
 		dat.opflags = C.NAT_LB_OP_CHKSRC
+	}
+	if w.TCPFullNATFC {
+		dat.opflags |= C.NAT_LB_OP_TCP_FULLNAT_FC
+	}
+	if w.NatType == DpFullNat && w.EpSel == EpQuicCID && w.Proto == syscall.IPPROTO_UDP && !w.DsrMode {
+		dat.opflags |= C.NAT_LB_OP_CID_REPLY_GUARD
 	}
 	if w.Ppv2En {
 		dat.ppv2 = 1
@@ -1222,6 +1246,29 @@ func DpQuicCidAvail() bool {
 	}
 	C.close(fd)
 	return true
+}
+
+// quicV3ObjectDigests is injected when the matching V3-enabled objects are built.
+var quicV3ObjectDigests string
+var quicV3Available bool
+
+func verifyQuicV3Objects() bool {
+	expected := strings.Split(quicV3ObjectDigests, ",")
+	paths := [...]string{C.LLB_FP_IMG_BPF, C.LLB_FP_IMG_BPF_EGR, C.LLB_FP_IMG_DEFAULT}
+	if len(expected) != len(paths) {
+		return false
+	}
+	for i, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func DpQuicV3Avail() bool {
+	return quicV3Available
 }
 
 // DpQuicCidStatsGet - reads the selector counters of a rule by its mark, and whether
@@ -2760,6 +2807,13 @@ func (e *DpEbpfH) DpCtAdd(w *DpCtInfo) int {
 		return EbpfErrCtAdd
 	}
 
+	if e.returnPrep != nil && len(w.PKey) == C.sizeof_struct_dp_ct_key && len(w.PVal) == C.sizeof_struct_dp_ct_tact && bool(C.return_prep_forward(ptact)) {
+		k := (*C.struct_dp_ct_key)(unsafe.Pointer(&w.PKey[0]))
+		if k.v6 == 0 && k.l4proto == syscall.IPPROTO_TCP && int(k.zone) == mh.zr.ZoneNum &&
+			w.SIP.Equal(tk.NltoIP(uint32(k.saddr[0]))) && w.DIP.Equal(tk.NltoIP(uint32(k.daddr[0]))) {
+			e.returnPrep.offer(mapKey, cte, cti, r)
+		}
+	}
 	return 0
 }
 
@@ -2823,4 +2877,14 @@ func SysctlInit() {
 
 func SysctlPostInit() {
 	utils.WriteFile("/proc/sys/net/ipv4/conf/llb0/rp_filter", "0")
+}
+
+// drainCIDService returns only after a second pass confirms no owned entries remain.
+func drainCIDService(vip net.IP, zone int, port uint16, rid uint32) (uint32, uint32, error) {
+	var ct, fc C.uint
+	rc := C.llb_cid_handoff_drain(C.uint(tk.IPtonl(vip)), C.ushort(zone), C.ushort(tk.Htons(port)), C.uint(rid), &ct, &fc)
+	if rc != 0 {
+		return uint32(ct), uint32(fc), syscall.Errno(-rc)
+	}
+	return uint32(ct), uint32(fc), nil
 }

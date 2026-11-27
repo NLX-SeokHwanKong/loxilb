@@ -7,6 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG TAG=main
 ARG OPENSSL_BUILD_CPUS=0
 ARG USE_DOCKER_BUILDX_ARM64=false
+ARG QUIC_CID_V3=0
 # Release version stamped into the binary. .dockerignore excludes .git, so the
 # build below cannot derive it from a tag -- it has to be passed in. Left empty
 # the binary reports the dev placeholder from common/common.go.
@@ -54,8 +55,8 @@ RUN mkdir -p /opt/loxilb && \
     /usr/local/sbin/loxicmd completion bash > /etc/bash_completion.d/loxi_completion && \
     # Install loxilb
     cd /root/loxilb-io/loxilb/ && \
-    go get . && make clean && if [ "$arch" = "arm64" ] && [ "$USE_DOCKER_BUILDX_ARM64" = "true" ] ; then DOCKER_BUILDX_ARM64=true make VERSION="$VERSION"; \
-    else make VERSION="$VERSION" ;fi && cp loxilb-ebpf/utils/mkllb_bpffs.sh /usr/local/sbin/mkllb_bpffs && \
+    go get . && make clean && if [ "$arch" = "arm64" ] && [ "$USE_DOCKER_BUILDX_ARM64" = "true" ] ; then DOCKER_BUILDX_ARM64=true make VERSION="$VERSION" QUIC_CID_V3="$QUIC_CID_V3"; \
+    else make VERSION="$VERSION" QUIC_CID_V3="$QUIC_CID_V3" ;fi && cp loxilb-ebpf/utils/mkllb_bpffs.sh /usr/local/sbin/mkllb_bpffs && \
     cp tools/k8s/mkllb-url /usr/local/sbin/mkllb-url && \
     cp loxilb-ebpf/utils/mkllb_cgroup.sh /usr/local/sbin/mkllb_cgroup && \
     cp /root/loxilb-io/loxilb/loxilb-ebpf/kernel/loxilb_dp_debug  /usr/local/sbin/loxilb_dp_debug && \

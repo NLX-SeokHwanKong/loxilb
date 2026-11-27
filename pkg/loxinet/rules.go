@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/loxilb-io/loxilb/api/loxinlp"
@@ -248,8 +249,9 @@ type ruleLBActs struct {
 	sel       cmn.EpSelect
 	endPoints []ruleLBEp
 	// quicSidLen, quicCr - only with LbSelQuicCID
-	quicSidLen uint8
-	quicCr     uint8
+	quicSidLen  uint8
+	quicCr      uint8
+	quicProfile string
 	// prioSlotOf[slot] is the endPoints index programmed into that DP
 	// slot for LbSelPrio rules. The DP counts stats per slot, not per
 	// endpoint, so stat collection must fold slots back via this map.
@@ -815,8 +817,9 @@ func (R *RuleH) GetLBRule() ([]cmn.LbRuleMod, error) {
 		ret.Serv.Sel = data.act.action.(*ruleLBActs).sel
 		if ret.Serv.Sel == cmn.LbSelQuicCID {
 			ret.Serv.QuicLb = &cmn.QuicLbArg{
-				SidLen: data.act.action.(*ruleLBActs).quicSidLen,
-				Cr:     data.act.action.(*ruleLBActs).quicCr,
+				Profile: data.act.action.(*ruleLBActs).quicProfile,
+				SidLen:  data.act.action.(*ruleLBActs).quicSidLen,
+				Cr:      data.act.action.(*ruleLBActs).quicCr,
 			}
 		}
 		ret.Serv.Mode = data.act.action.(*ruleLBActs).mode
@@ -1525,7 +1528,7 @@ func (R *RuleH) addVIPSys(r *ruleEnt) {
 	}
 }
 
-func getLBConsolidatedEPs(oldEps []ruleLBEp, newEps []ruleLBEp, oper cmn.LBOp) (bool, []ruleLBEp, []ruleLBEp) {
+func getLBConsolidatedEPs(oldEps []ruleLBEp, newEps []ruleLBEp, oper cmn.LBOp, detachMissing bool) (bool, []ruleLBEp, []ruleLBEp) {
 	var retEps []ruleLBEp
 	var delEps []ruleLBEp
 	ruleChg := false
@@ -1570,14 +1573,24 @@ func getLBConsolidatedEPs(oldEps []ruleLBEp, newEps []ruleLBEp, oper cmn.LBOp) (
 		return true, retEps, delEps
 	}
 
+	retEps = oldEps
+	if detachMissing {
+		retEps = make([]ruleLBEp, 0, len(oldEps))
+	}
 	for i := range oldEps {
 		e := &oldEps[i]
-		if !e.chkVal && !e.inActiveEP {
+		if detachMissing {
+			if e.chkVal {
+				retEps = append(retEps, *e)
+				e.chkVal = false
+			} else {
+				ruleChg = true
+				delEps = append(delEps, *e)
+			}
+		} else if !e.chkVal && !e.inActiveEP {
 			delEps = append(delEps, *e)
 		}
 	}
-
-	retEps = oldEps
 
 	// Attach LB endpoints to an existing LB
 	for i, nEp := range newEps {
@@ -1629,16 +1642,27 @@ func validateQuicCidRule(serv *cmn.LbServiceArg, eps []cmn.LbEndPointArg) (uint8
 	if !tk.IsNetIPv4(serv.ServIP) || (serv.PrivateIP != "" && !tk.IsNetIPv4(serv.PrivateIP)) {
 		return 0, 0, errors.New("quic-cid-args error: service address must be ipv4")
 	}
+	v3 := serv.QuicLb != nil && serv.QuicLb.Profile == cmn.QuicLbProfileMvfstV3
+	if serv.QuicLb != nil && serv.QuicLb.Profile != "" && !v3 {
+		return 0, 0, errors.New("quic-cid-args error: unknown CID profile")
+	}
+	if v3 && (serv.Mode != cmn.LBModeFullNAT || serv.QuicLb.Cr != 0) {
+		return 0, 0, errors.New("quic-cid-args error: mvfst-v3 requires FullNAT and cr 0")
+	}
 	seen := make(map[string]struct{}, len(eps))
 	for _, ep := range eps {
 		if !tk.IsNetIPv4(ep.EpIP) {
 			return 0, 0, errors.New("quic-cid-args error: end-point address must be ipv4")
 		}
-		// An end-point is found by its address, so two entries cannot share one
-		if _, dup := seen[ep.EpIP]; dup {
+		ip := net.ParseIP(ep.EpIP).To4()
+		if v3 && (ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast)) {
+			return 0, 0, errors.New("quic-cid-args error: mvfst-v3 requires unicast relay IPv4 SIDs")
+		}
+		// An end-point is found by its address, so two entries cannot share one.
+		if _, dup := seen[ip.String()]; dup {
 			return 0, 0, errors.New("quic-cid-args error: end-point addresses must be unique")
 		}
-		seen[ep.EpIP] = struct{}{}
+		seen[ip.String()] = struct{}{}
 	}
 	if serv.QuicLb != nil {
 		sidLen, cr = serv.QuicLb.SidLen, serv.QuicLb.Cr
@@ -1777,6 +1801,12 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 		if quicSidLen, quicCr, qerr = validateQuicCidRule(&serv, servEndPoints); qerr != nil {
 			return RuleArgsErr, qerr
 		}
+		if serv.QuicLb != nil {
+			lBActs.quicProfile = serv.QuicLb.Profile
+		}
+		if lBActs.quicProfile == cmn.QuicLbProfileMvfstV3 && !DpQuicV3Avail() {
+			return RuleArgsErr, errors.New("quic-cid-args error: datapath does not support mvfst-v3")
+		}
 		if !DpQuicCidAvail() {
 			return RuleArgsErr, errors.New("quic-cid-args error: datapath built without the selector")
 		}
@@ -1864,13 +1894,20 @@ func (R *RuleH) AddLbRule(serv cmn.LbServiceArg, servSecIPs []cmn.LbSecIPArg, al
 	eRule := R.tables[RtLB].eMap[rt.ruleKey()]
 
 	if eRule != nil {
+		if eRule.act.action.(*ruleLBActs).quicProfile != lBActs.quicProfile {
+			return RuleArgsErr, errors.New("quic-cid-args error: CID profile cannot change on an existing rule")
+		}
 		if !reflect.DeepEqual(eRule.secIP, nSecIP) {
 			return RuleUnknownServiceErr, errors.New("secIP modify error")
 		}
-		// If a LB rule already exists, we try not reschuffle the order of the end-points.
-		// We will try to append the new end-points at the end, while marking any other end-points
-		// not in the new list as inactive
-		ruleChg, retEps, delEps := getLBConsolidatedEPs(eRule.act.action.(*ruleLBActs).endPoints, lBActs.endPoints, serv.Oper)
+		// A managed FullNAT CID upsert carries the controller's full desired endpoint
+		// set. Remove omitted arms so their return guards are released in the same
+		// NAT map update. Keep the order and state of surviving endpoints.
+		oldLB := eRule.act.action.(*ruleLBActs)
+		detachMissing := eRule.managed && serv.Managed && serv.Oper == cmn.LBOPAdd &&
+			oldLB.sel == cmn.LbSelQuicCID && lBActs.sel == cmn.LbSelQuicCID &&
+			oldLB.mode == cmn.LBModeFullNAT && lBActs.mode == cmn.LBModeFullNAT
+		ruleChg, retEps, delEps := getLBConsolidatedEPs(oldLB.endPoints, lBActs.endPoints, serv.Oper, detachMissing)
 
 		if eRule.hChk.prbType != serv.ProbeType || eRule.hChk.prbPort != serv.ProbePort ||
 			eRule.hChk.prbReq != serv.ProbeReq || eRule.hChk.prbResp != serv.ProbeResp ||
@@ -3250,10 +3287,12 @@ func (r *ruleEnt) LB2DP(work DpWorkT) int {
 			nWork.EpSel = EpQuicCID
 			nWork.QuicSidLen = at.quicSidLen
 			nWork.QuicCr = at.quicCr
+			nWork.QuicProfile = at.quicProfile
 		default:
 			nWork.EpSel = EpRR
 		}
 		mode = at.mode
+		nWork.TCPFullNATFC = mode == cmn.LBModeFullNAT && r.tuples.l3Dst.addr.IP.To4() != nil && r.tuples.l4Prot.val == syscall.IPPROTO_TCP
 		if mode == cmn.LBModeDSR {
 			nWork.DsrMode = true
 		}

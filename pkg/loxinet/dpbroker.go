@@ -320,9 +320,12 @@ type LBDpWorkQ struct {
 	PersistTo uint64
 	endPoints []NatEP
 	secIP     []net.IP
+	// TCPFullNATFC applies only to IPv4 TCP services configured in FullNAT mode.
+	TCPFullNATFC bool
 	// QuicSidLen, QuicCr - only with EpQuicCID
-	QuicSidLen uint8
-	QuicCr     uint8
+	QuicSidLen  uint8
+	QuicCr      uint8
+	QuicProfile string
 }
 
 // LBCtDpWorkQ - work queue entry for service-level CT/FC cleanup

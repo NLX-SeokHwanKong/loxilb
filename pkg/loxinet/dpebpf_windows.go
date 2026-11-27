@@ -30,6 +30,8 @@ type DpEbpfH struct {
 }
 
 // DpQuicCidAvail - tells whether the datapath has the QUIC CID selector
+func DpQuicV3Avail() bool { return false }
+
 func DpQuicCidAvail() bool {
 	return false
 }
@@ -53,4 +55,8 @@ func SysctlInit() {
 }
 
 func SysctlPostInit() {
+}
+
+func startCIDHandoff(string, int) error {
+	return fmt.Errorf("CID handoff requires the Linux eBPF datapath")
 }

@@ -4020,6 +4020,9 @@ definitions:
             type: object
             description: QUIC-LB parameters, only with sel 7 (quic-cid)
             properties:
+              profile:
+                type: string
+                description: CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.
               sidLen:
                 type: integer
                 x-nullable: true

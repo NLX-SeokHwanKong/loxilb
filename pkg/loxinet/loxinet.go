@@ -356,6 +356,11 @@ func loxiNetInit() {
 		// Cluster state changes are applied to the root zone; start applying
 		// them now that it exists.
 		mh.has.CIStartSync()
+		if opts.Opts.CIDHandoff != "" && !mh.disBPF {
+			if err := startCIDHandoff(opts.Opts.CIDHandoff, mh.zr.ZoneNum); err != nil {
+				tk.LogIt(tk.LogError, "CID handoff disabled: %v\n", err)
+			}
+		}
 
 		if clusterMode {
 			if opts.Opts.Bgp {

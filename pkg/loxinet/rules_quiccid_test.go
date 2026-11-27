@@ -70,3 +70,37 @@ func TestValidateQuicCidRule(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateMvfstV3Rule(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    cmn.LBMode
+		profile string
+		cr      uint8
+		ips     []string
+		wantErr bool
+	}{
+		{"valid", cmn.LBModeFullNAT, cmn.QuicLbProfileMvfstV3, 0, []string{"192.0.2.1", "192.0.2.2"}, false},
+		{"unknown profile", cmn.LBModeFullNAT, "unknown", 0, []string{"192.0.2.1"}, true},
+		{"unsupported mode", cmn.LBModeOneArm, cmn.QuicLbProfileMvfstV3, 0, []string{"192.0.2.1"}, true},
+		{"nonzero CR", cmn.LBModeFullNAT, cmn.QuicLbProfileMvfstV3, 1, []string{"192.0.2.1"}, true},
+		{"zero SID", cmn.LBModeFullNAT, cmn.QuicLbProfileMvfstV3, 0, []string{"0.0.0.0"}, true},
+		{"duplicate SID", cmn.LBModeFullNAT, cmn.QuicLbProfileMvfstV3, 0, []string{"192.0.2.1", "192.0.2.1"}, true},
+		{"multicast SID", cmn.LBModeFullNAT, cmn.QuicLbProfileMvfstV3, 0, []string{"224.0.0.1"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := cmn.LbServiceArg{
+				ServIP: "192.0.2.100", Proto: "udp", Mode: tc.mode, Sel: cmn.LbSelQuicCID,
+				QuicLb: &cmn.QuicLbArg{Profile: tc.profile, SidLen: 4, Cr: tc.cr},
+			}
+			var endpoints []cmn.LbEndPointArg
+			for i, ip := range tc.ips {
+				endpoints = append(endpoints, cmn.LbEndPointArg{EpIP: ip, EpPort: uint16(9000 + i)})
+			}
+			_, _, err := validateQuicCidRule(&service, endpoints)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("got %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -25,13 +25,21 @@ endif
 loxilbid=$(shell docker ps -f name=$(dock) | grep -w $(dock) | cut  -d " "  -f 1 | grep -iv  "CONTAINER")
 
 subsys:
+ifeq ($(QUIC_CID_V3),1)
+	@rm -f loxilb-ebpf/kernel/llb_ebpf_main.o loxilb-ebpf/kernel/llb_ebpf_emain.o loxilb-ebpf/kernel/llb_xdp_main.o
+endif
 	cd loxilb-ebpf && $(MAKE) 
 
 subsys-clean:
 	cd loxilb-ebpf && $(MAKE) clean
 
 build: subsys
+ifeq ($(QUIC_CID_V3),1)
+	@set -e; digests=$$(sha256sum loxilb-ebpf/kernel/llb_ebpf_main.o loxilb-ebpf/kernel/llb_ebpf_emain.o loxilb-ebpf/kernel/llb_xdp_main.o | cut -d ' ' -f1 | paste -sd, -); \
+	  go build -o ${bin} -ldflags="$(LDFLAGS) -X github.com/loxilb-io/loxilb/pkg/loxinet.quicV3ObjectDigests=$$digests"
+else
 	@go build -o ${bin} -ldflags="$(LDFLAGS)"
+endif
 	
 clean: subsys-clean
 	go clean

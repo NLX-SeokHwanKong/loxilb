@@ -916,6 +916,9 @@ func (m *LoadbalanceEntryServiceArguments) UnmarshalBinary(b []byte) error {
 // swagger:model LoadbalanceEntryServiceArgumentsQuicLb
 type LoadbalanceEntryServiceArgumentsQuicLb struct {
 
+	// CID profile. Omit for legacy plaintext, or specify mvfst-v3 for IPv4 UDP FullNAT.
+	Profile string `json:"profile,omitempty"`
+
 	// config rotation value the connection IDs carry, 0-7. The default is 0
 	Cr int64 `json:"cr,omitempty"`
 

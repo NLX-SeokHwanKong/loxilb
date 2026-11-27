@@ -903,17 +903,12 @@ func DpWorker(dp *DpH, f chan int, ch chan interface{}) {
 		os.Exit(1)
 	}()
 	for {
-		for n := 0; n < DpWorkQLen; n++ {
-			select {
-			case m := <-ch:
-				DpWorkSingle(dp, m)
-			case <-f:
-				return
-			default:
-				continue
-			}
+		select {
+		case m := <-ch:
+			DpWorkSingle(dp, m)
+		case <-f:
+			return
 		}
-		time.Sleep(1000 * time.Millisecond)
 	}
 }
 

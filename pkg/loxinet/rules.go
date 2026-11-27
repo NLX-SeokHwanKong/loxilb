@@ -211,20 +211,23 @@ type epHostOpts struct {
 }
 
 type epHost struct {
-	epKey           string
-	hostName        string
-	hostState       string
-	ruleCount       int
-	inactive        bool
-	initProberOn    bool
-	sT              time.Time
-	avgDelay        time.Duration
-	minDelay        time.Duration
-	maxDelay        time.Duration
-	hID             uint8
-	inActTries      int
-	probeGeneration uint64
-	opts            epHostOpts
+	epKey              string
+	hostName           string
+	hostState          string
+	ruleCount          int
+	inactive           bool
+	initProberOn       bool
+	sT                 time.Time
+	avgDelay           time.Duration
+	minDelay           time.Duration
+	maxDelay           time.Duration
+	hID                uint8
+	inActTries         int
+	probeGeneration    uint64
+	readinessDue       time.Time
+	readinessPending   bool
+	readinessSuccesses uint8
+	opts               epHostOpts
 }
 
 type ruleLBEp struct {
@@ -2742,12 +2745,25 @@ func (R *RuleH) AddEPHost(apiCall bool, hostName string, name string, args epHos
 	if ep != nil {
 		if apiCall {
 			egress := ep.opts.egress
+			wasManaged := ep.opts.usesQuicReadiness()
 			ep.opts = args
 			if egress {
 				ep.opts.egress = egress
 			}
 			ep.opts.currProbeDuration = ep.opts.probeDuration
 			ep.initProberOn = true
+			if wasManaged || args.usesQuicReadiness() {
+				ep.readinessDue = time.Time{}
+				ep.readinessSuccesses = 0
+				ep.inActTries = 0
+			}
+			if !wasManaged && args.usesQuicReadiness() && !ep.inactive {
+				ep.inactive = true
+				select {
+				case mh.quicHealthWake <- struct{}{}:
+				default:
+				}
+			}
 			ep.probeGeneration++
 			return 0, nil
 		}
@@ -2759,6 +2775,7 @@ func (R *RuleH) AddEPHost(apiCall bool, hostName string, name string, args epHos
 	ep.epKey = epKey
 	ep.hostName = hostName
 	ep.opts = args
+	ep.inactive = args.usesQuicReadiness()
 	ep.initProberOn = true
 	ep.opts.currProbeDuration = ep.opts.probeDuration
 
@@ -2924,6 +2941,10 @@ func probeUDPSocket(address string, timeout time.Duration) bool {
 }
 
 func (R *RuleH) epCheckNow(ep *epHost) {
+	if ep.opts.usesQuicReadiness() {
+		ep.checkQuicReadiness()
+		return
+	}
 	var sType string
 	sHint := ""
 
@@ -3049,6 +3070,11 @@ func (R *RuleH) epCheckNow(ep *epHost) {
 
 func epTicker(R *RuleH, helper int) {
 	epc := R.epCs[helper]
+	if opts.Opts.MoQHealthSocket != "" {
+		stopReady := make(chan struct{})
+		defer close(stopReady)
+		go quicReadinessTicker(R, helper, stopReady)
+	}
 
 	idx := 0
 	tlen := 0
@@ -3078,7 +3104,7 @@ func epTicker(R *RuleH, helper int) {
 			tidx := 0
 			for _, host := range R.epMap {
 
-				if host.hID == uint8(helper) {
+				if host.hID == uint8(helper) && !host.opts.usesQuicReadiness() {
 
 					if run%2 == 0 {
 						if (host.opts.probeType == HostProbePing && host.avgDelay == 0) || host.inactive ||
@@ -3117,6 +3143,10 @@ func (R *RuleH) probeEPHost(ep *epHost) {
 	R.epMx.RLock()
 	next := *ep
 	R.epMx.RUnlock()
+	R.probeEPHostSnapshot(ep, next)
+}
+
+func (R *RuleH) probeEPHostSnapshot(ep *epHost, next epHost) {
 	R.epCheckNow(&next)
 	finished := time.Now()
 
@@ -3130,6 +3160,7 @@ func (R *RuleH) probeEPHost(ep *epHost) {
 	ep.inactive = next.inactive
 	ep.initProberOn = next.initProberOn
 	ep.inActTries = next.inActTries
+	ep.readinessSuccesses = next.readinessSuccesses
 	ep.opts.currProbeDuration = next.opts.currProbeDuration
 	ep.avgDelay, ep.minDelay, ep.maxDelay = next.avgDelay, next.minDelay, next.maxDelay
 	R.epMx.Unlock()

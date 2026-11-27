@@ -1146,6 +1146,8 @@ func DpLBRuleMod(w *LBDpWorkQ) int {
 
 		if k.InActive {
 			nxfa.inactive = 1
+		} else if k.Draining && w.EpSel == EpQuicCID && w.QuicProfile == cmn.QuicLbProfileMvfstV3 {
+			nxfa.inactive = C.LLB_NAT_EP_DRAINING
 		}
 
 		nxfa = (*nxfrmAct)(getPtrOffset(unsafe.Pointer(nxfa),

@@ -67,6 +67,7 @@ type loxiNetH struct {
 	zn               *ZoneH
 	zr               *Zone
 	mtx              sync.RWMutex
+	quicHealthWake   chan struct{}
 	ticker           *time.Ticker
 	tDone            chan bool
 	sigCh            chan os.Signal
@@ -206,6 +207,14 @@ func loxiNetTicker(bgpPeerMode bool) {
 				mh.has.CIDestroy()
 				apiserver.ApiServerShutOk()
 			}
+		case <-mh.quicHealthWake:
+			if !bgpPeerMode {
+				mh.mtx.Lock()
+				for _, zone := range mh.zn.ZoneMap {
+					zone.Rules.syncMonitoredQuicHealth()
+				}
+				mh.mtx.Unlock()
+			}
 		case t := <-mh.ticker.C:
 			tk.LogIt(-1, "Tick at %v\n", t)
 			if !bgpPeerMode {
@@ -234,6 +243,9 @@ func sysctlPostInit() {
 
 func loxiNetInit() {
 	var rpcMode int
+	if opts.Opts.QuicHealthEvents {
+		mh.quicHealthWake = make(chan struct{}, 1)
+	}
 
 	// Initialize logger and specify the log file
 	logfile := fmt.Sprintf("%s%s.log", "/var/log/loxilb", os.Getenv("HOSTNAME"))

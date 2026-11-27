@@ -56,7 +56,13 @@ RUN mkdir -p /opt/loxilb && \
     # Install loxilb
     cd /root/loxilb-io/loxilb/ && \
     go get . && make clean && if [ "$arch" = "arm64" ] && [ "$USE_DOCKER_BUILDX_ARM64" = "true" ] ; then DOCKER_BUILDX_ARM64=true make VERSION="$VERSION" QUIC_CID_V3="$QUIC_CID_V3"; \
-    else make VERSION="$VERSION" QUIC_CID_V3="$QUIC_CID_V3" ;fi && cp loxilb-ebpf/utils/mkllb_bpffs.sh /usr/local/sbin/mkllb_bpffs && \
+    else make VERSION="$VERSION" QUIC_CID_V3="$QUIC_CID_V3" ;fi && \
+    install -m 0644 -t /opt/loxilb \
+        loxilb-ebpf/kernel/llb_ebpf_main.o loxilb-ebpf/kernel/llb_ebpf_emain.o \
+        loxilb-ebpf/kernel/llb_xdp_main.o loxilb-ebpf/kernel/llb_kern_mon.o \
+        loxilb-ebpf/kernel/llb_kern_sock.o loxilb-ebpf/kernel/llb_kern_sockmap.o \
+        loxilb-ebpf/kernel/llb_kern_sockstream.o loxilb-ebpf/kernel/llb_kern_sockdirect.o && \
+    cp loxilb-ebpf/utils/mkllb_bpffs.sh /usr/local/sbin/mkllb_bpffs && \
     cp tools/k8s/mkllb-url /usr/local/sbin/mkllb-url && \
     cp loxilb-ebpf/utils/mkllb_cgroup.sh /usr/local/sbin/mkllb_cgroup && \
     cp /root/loxilb-io/loxilb/loxilb-ebpf/kernel/loxilb_dp_debug  /usr/local/sbin/loxilb_dp_debug && \

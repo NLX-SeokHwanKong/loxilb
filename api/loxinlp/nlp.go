@@ -1592,6 +1592,70 @@ func RUWorker(ch chan nlp.RouteUpdate, f chan struct{}) {
 	}
 }
 
+// drainNetlinkBatch applies a wake-up event first, then consumes the rest of
+// that channel's budget. A closed subscription must never produce a zero event.
+func drainNetlinkBatch[T any](ch *chan T, first *T, budget int, apply func(T) int) {
+	if first != nil {
+		apply(*first)
+		budget--
+	}
+	for i := 0; i < budget; i++ {
+		select {
+		case update, ok := <-*ch:
+			if !ok {
+				*ch = nil
+				return
+			}
+			apply(update)
+		default:
+			return
+		}
+	}
+}
+
+func runNetlinkUpdates(n *NlH, link func(nlp.LinkUpdate) int, addr func(nlp.AddrUpdate) int,
+	neigh func(nlp.NeighUpdate) int, route func(nlp.RouteUpdate) int) {
+	links, addrs, neighbors, routes := n.FromLUCh, n.FromAUCh, n.FromNUCh, n.FromRUCh
+	for links != nil || addrs != nil || neighbors != nil || routes != nil {
+		var firstLink *nlp.LinkUpdate
+		var firstAddr *nlp.AddrUpdate
+		var firstNeigh *nlp.NeighUpdate
+		var firstRoute *nlp.RouteUpdate
+
+		// Wait for work, then stage the selected update until its regular turn.
+		select {
+		case update, ok := <-links:
+			if ok {
+				firstLink = &update
+			} else {
+				links = nil
+			}
+		case update, ok := <-addrs:
+			if ok {
+				firstAddr = &update
+			} else {
+				addrs = nil
+			}
+		case update, ok := <-neighbors:
+			if ok {
+				firstNeigh = &update
+			} else {
+				neighbors = nil
+			}
+		case update, ok := <-routes:
+			if ok {
+				firstRoute = &update
+			} else {
+				routes = nil
+			}
+		}
+		drainNetlinkBatch(&links, firstLink, 32, link)
+		drainNetlinkBatch(&addrs, firstAddr, 64, addr)
+		drainNetlinkBatch(&neighbors, firstNeigh, 128, neigh)
+		drainNetlinkBatch(&routes, firstRoute, 128, route)
+	}
+}
+
 func NLWorker(nNl *NlH, bgpPeerMode bool, ch chan bool, wch chan bool) {
 	ch <- true
 	<-wch
@@ -1609,15 +1673,9 @@ func NLWorker(nNl *NlH, bgpPeerMode bool, ch chan bool, wch chan bool) {
 			RUWorker(nNl.FromRUCh, nNl.FromRUDone)
 			time.Sleep(1000 * time.Millisecond)
 		}
-	} else {
-		for { /* Single thread for reading all NL msgs in below order */
-			LUWorker(nNl.FromLUCh, nNl.FromLUDone)
-			AUWorker(nNl.FromAUCh, nNl.FromAUDone)
-			NUWorker(nNl.FromNUCh, nNl.FromNUDone)
-			RUWorker(nNl.FromRUCh, nNl.FromRUDone)
-			time.Sleep(500 * time.Millisecond)
-		}
 	}
+	runNetlinkUpdates(nNl, LUWorkSingle, AUWorkSingle, NUWorkSingle, RUWorkSingle)
+	tk.LogIt(tk.LogCritical, "nlp: all Netlink update subscriptions closed\n")
 }
 
 func GetBridges() {

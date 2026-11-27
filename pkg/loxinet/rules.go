@@ -2836,6 +2836,23 @@ func (R *RuleH) DeleteEPHost(apiCall bool, name string, hostName string, probeTy
 	return 0, nil
 }
 
+// drainableEndpoint checks the rule table while the caller holds the rule API lock.
+func (R *RuleH) drainableEndpoint(key string) bool {
+	for _, rule := range R.tables[RtLB].eMap {
+		action, ok := rule.act.action.(*ruleLBActs)
+		if !ok || !rule.hChk.actChk || action.sel != cmn.LbSelQuicCID ||
+			action.quicProfile != cmn.QuicLbProfileMvfstV3 {
+			continue
+		}
+		for _, ep := range action.endPoints {
+			if makeEPKey(ep.xIP.String(), HostProbeConnectUDP, ep.xPort) == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // SetEPHostState - Set an end-point host state
 // It will return 0 and nil error, else appropriate return code and error string will be set
 func (R *RuleH) SetEPHostState(hostName string, epPort uint16, epProto string, state string) (int, error) {
@@ -2866,7 +2883,16 @@ func (R *RuleH) SetEPHostState(hostName string, epPort uint16, epProto string, s
 		if ep == nil {
 			return RuleEpNotExistErr, errors.New("ephost-notfound error")
 		}
+		if state == cmn.HostStateDrain && !R.drainableEndpoint(key) {
+			return RuleEpHostUnkErr, errors.New("drain requires an endpoint referenced by a monitored mvfst-v3 quic-cid rule")
+		}
 		ep.hostState = state
+		if state == cmn.HostStateDrain && mh.quicHealthWake != nil {
+			select {
+			case mh.quicHealthWake <- struct{}{}:
+			default:
+			}
+		}
 		tk.LogIt(tk.LogDebug, "ep %s - %s\n", ep.epKey, ep.hostState)
 	} else {
 		for _, ep := range R.epMap {
